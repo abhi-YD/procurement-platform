@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import SignOutButton from "@/components/SignOutButton";
 import BrochureUpload from "@/components/BrochureUpload";
 import BuyerSearch from "@/components/BuyerSearch";
+import VendorLocation from "@/components/VendorLocation";
 
 export default async function Dashboard() {
   const supabase = await createClient();
@@ -43,7 +44,10 @@ export default async function Dashboard() {
 function VendorHome() {
   return (
     <section className="p-8">
-      <BrochureUpload />
+      <div className="mx-auto max-w-2xl space-y-12">
+        <BrochureUpload />
+        <VendorLocation />
+      </div>
     </section>
   );
 }

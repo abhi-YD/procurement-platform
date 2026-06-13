@@ -29,7 +29,7 @@ export type Weights = {
 
 // preset priorities → weights (always sum to 1 after normalising)
 export const PRESETS: Record<string, Weights> = {
-  price_critical: { price: 0.5, delivery_days: 0.15, warranty_months: 0.2, rating: 0.15 },
+  price_critical: { price: 0.7, delivery_days: 0.1, warranty_months: 0.1, rating: 0.1 },
   fast_delivery:  { price: 0.2, delivery_days: 0.5, warranty_months: 0.15, rating: 0.15 },
   quality_first:  { price: 0.15, delivery_days: 0.15, warranty_months: 0.35, rating: 0.35 },
   balanced:       { price: 0.25, delivery_days: 0.25, warranty_months: 0.25, rating: 0.25 },
