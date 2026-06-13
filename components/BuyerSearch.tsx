@@ -1,15 +1,25 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { Fraunces } from "next/font/google";
 import { createClient } from "@/lib/supabase/client";
 import { scoreVendors, PRESETS, CatalogItem } from "@/lib/scoring";
+import { haversineKm } from "@/lib/distance";
+import { geocodeAddress } from "@/lib/geocode";
 import { useRouter } from "next/navigation";
 
 const fraunces = Fraunces({ subsets: ["latin"], weight: ["500", "600"] });
 
+const LocationMap = dynamic(() => import("@/components/map/LocationMap"), {
+  ssr: false,
+  loading: () => <div className="h-56 rounded-xl bg-stone-100 animate-pulse" />,
+});
+
 type CatalogRow = CatalogItem & { stock?: number | null };
-type Row = CatalogRow & { score: number; company_name?: string };
+type Decorated = CatalogRow & { company_name?: string; distanceKm?: number | null };
+type Row = Decorated & { score: number };
+type Pos = { lat: number; lng: number };
 
 const OPTIONS = [
   { key: "price_critical", label: "Lowest price", desc: "Cost matters most" },
@@ -32,7 +42,12 @@ export default function BuyerSearch() {
 
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [results, setResults] = useState<Row[]>([]);
+  const [rawVendors, setRawVendors] = useState<Decorated[]>([]);
+
+  // buyer location
+  const [buyerPos, setBuyerPos] = useState<Pos | null>(null);
+  const [address, setAddress] = useState("");
+  const [searching, setSearching] = useState(false);
 
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -67,13 +82,34 @@ export default function BuyerSearch() {
 
   const overStockLimit = maxStock !== null && quantity !== "" && Number(quantity) > maxStock;
 
+  // TABLE: re-ranks live whenever priority changes
+  const results = useMemo<Row[]>(() => {
+    if (!hasSearched || rawVendors.length === 0) return [];
+    return scoreVendors(rawVendors as CatalogItem[], PRESETS[priority]) as Row[];
+  }, [rawVendors, priority, hasSearched]);
+
+  // RECOMMENDATION: always the best all-round vendor (balanced), independent of priority
+  const recommendation = useMemo<Row | null>(() => {
+    if (!hasSearched || rawVendors.length === 0) return null;
+    const balanced = scoreVendors(rawVendors as CatalogItem[], PRESETS["balanced"]) as Row[];
+    return balanced[0] || null;
+  }, [rawVendors, hasSearched]);
+
+  const findAddress = async () => {
+    if (!address.trim()) return;
+    setSearching(true);
+    const result = await geocodeAddress(address);
+    setSearching(false);
+    if (result) setBuyerPos(result);
+  };
+
   const search = async () => {
     if (searchMode === "exact" && (!product || overStockLimit)) return;
     if (searchMode === "smart" && !smartQuery.trim()) return;
 
     setLoading(true);
     setHasSearched(true);
-    setResults([]);
+    setRawVendors([]);
 
     let valid: CatalogRow[] = [];
 
@@ -95,8 +131,8 @@ export default function BuyerSearch() {
         if (data.embeddings && data.embeddings.length > 0) {
           const { data: rpcData, error: rpcErr } = await supabase.rpc("match_products", {
             query_embedding: `[${data.embeddings[0].join(",")}]`,
-            match_threshold: 0.5,
-            match_count: 50,
+            match_threshold: 0.65,
+            match_count: 20,
           });
           if (rpcErr) throw rpcErr;
           valid = (rpcData || []) as CatalogRow[];
@@ -108,15 +144,21 @@ export default function BuyerSearch() {
       }
     }
 
-    // company names for the vendors we found
+    // company names + coordinates for the vendors we found
     const vendorIds = [...new Set(valid.map((c) => c.vendor_id))];
     const nameMap: Record<string, string> = {};
+    const coordMap: Record<string, Pos> = {};
     if (vendorIds.length > 0) {
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("id, company_name")
+        .select("id, company_name, latitude, longitude")
         .in("id", vendorIds);
-      profiles?.forEach((p) => { if (p.company_name) nameMap[p.id] = p.company_name; });
+      profiles?.forEach((p) => {
+        if (p.company_name) nameMap[p.id] = p.company_name;
+        if (p.latitude != null && p.longitude != null) {
+          coordMap[p.id] = { lat: p.latitude, lng: p.longitude };
+        }
+      });
     }
 
     // filter by quantity, stock and deadline
@@ -128,12 +170,18 @@ export default function BuyerSearch() {
       return true;
     });
 
-    const scored = scoreVendors(valid as CatalogItem[], PRESETS[priority]) as Row[];
-    const withNames = scored.map((r) => ({
-      ...r,
-      company_name: nameMap[r.vendor_id] || `Vendor ${r.vendor_id.slice(0, 8)}`,
-    }));
-    setResults(withNames);
+    // decorate with company name + distance, store raw (scoring happens in useMemo)
+    const decorated: Decorated[] = valid.map((r) => {
+      const vendorPos = coordMap[r.vendor_id];
+      const distanceKm = buyerPos && vendorPos ? haversineKm(buyerPos, vendorPos) : null;
+      return {
+        ...r,
+        company_name: nameMap[r.vendor_id] || `Vendor ${r.vendor_id.slice(0, 8)}`,
+        distanceKm,
+      };
+    });
+
+    setRawVendors(decorated);
     setLoading(false);
   };
 
@@ -195,7 +243,7 @@ export default function BuyerSearch() {
                 <select
                   value={selectedCategory}
                   onChange={(e) => { setSelectedCategory(e.target.value); setProduct(""); }}
-                  className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c]"
+                  className="w-full rounded-xl border border-stone-300 p-3 bg-white text-stone-900 outline-none focus:border-[#c2410c]"
                 >
                   <option value="" disabled>Select a category…</option>
                   {categories.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -207,7 +255,7 @@ export default function BuyerSearch() {
                   value={product}
                   onChange={(e) => setProduct(e.target.value)}
                   disabled={!selectedCategory}
-                  className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] disabled:opacity-50"
+                  className="w-full rounded-xl border border-stone-300 p-3 bg-white text-stone-900 outline-none focus:border-[#c2410c] disabled:opacity-50"
                 >
                   <option value="" disabled>{selectedCategory ? "Select a product…" : "Pick a category first…"}</option>
                   {availableProducts.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -222,7 +270,7 @@ export default function BuyerSearch() {
                 value={smartQuery}
                 onChange={(e) => setSmartQuery(e.target.value)}
                 placeholder="e.g. high performance laptop for 4k video editing"
-                className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c]"
+                className="w-full rounded-xl border border-stone-300 p-3 bg-white text-stone-900 outline-none focus:border-[#c2410c]"
               />
             </div>
           )}
@@ -239,7 +287,7 @@ export default function BuyerSearch() {
               value={quantity}
               onChange={(e) => setQuantity(e.target.value ? Number(e.target.value) : "")}
               placeholder="e.g. 50"
-              className={`w-full rounded-xl border p-3 bg-white outline-none focus:ring-1 ${overStockLimit ? "border-red-400 focus:ring-red-500 bg-red-50" : "border-stone-300 focus:border-[#c2410c]"}`}
+              className={`w-full rounded-xl border p-3 bg-white text-stone-900 outline-none focus:ring-1 ${overStockLimit ? "border-red-400 focus:ring-red-500 bg-red-50" : "border-stone-300 focus:border-[#c2410c]"}`}
             />
           </div>
 
@@ -250,7 +298,7 @@ export default function BuyerSearch() {
               value={deadline}
               onChange={(e) => setDeadline(e.target.value ? Number(e.target.value) : "")}
               placeholder="Optional"
-              className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c]"
+              className="w-full rounded-xl border border-stone-300 p-3 bg-white text-stone-900 outline-none focus:border-[#c2410c]"
             />
           </div>
 
@@ -269,6 +317,30 @@ export default function BuyerSearch() {
               ))}
             </div>
           </div>
+
+          {/* buyer location */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-stone-700 mb-2">Your location (optional — to see distance)</label>
+            <div className="flex gap-2">
+              <input
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") findAddress(); }}
+                placeholder="e.g. Connaught Place, Delhi"
+                className="flex-1 rounded-xl border border-stone-300 px-4 py-2.5 text-stone-900 outline-none focus:border-[#c2410c]"
+              />
+              <button
+                onClick={findAddress}
+                disabled={searching || !address.trim()}
+                className="rounded-xl bg-[#c2410c] px-5 py-2.5 font-medium text-white hover:bg-[#a8370b] disabled:opacity-50"
+              >
+                {searching ? "Finding…" : "Find"}
+              </button>
+            </div>
+            <div className="mt-3 overflow-hidden rounded-xl border border-stone-200">
+              <LocationMap value={buyerPos} onPick={(p) => setBuyerPos(p)} height={220} />
+            </div>
+          </div>
         </div>
 
         <button
@@ -280,30 +352,30 @@ export default function BuyerSearch() {
         </button>
       </div>
 
-      {/* Top recommendation */}
-      {hasSearched && !loading && results.length > 0 && (
+      {/* Recommendation — best overall (balanced), independent of the chosen sort */}
+      {hasSearched && !loading && recommendation && (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6">
-          <h3 className="text-sm font-medium text-emerald-800 mb-2">Top recommendation</h3>
+          <h3 className="text-sm font-medium text-emerald-800 mb-2">Our recommendation · best overall</h3>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <p className={`${fraunces.className} text-2xl text-emerald-950`}>{results[0].product_name}</p>
-              <p className="text-emerald-700 mt-1 font-medium">Offered by {results[0].company_name}</p>
+              <p className={`${fraunces.className} text-2xl text-emerald-950`}>{recommendation.product_name}</p>
+              <p className="text-emerald-700 mt-1 font-medium">Offered by {recommendation.company_name}</p>
             </div>
             <div className="flex gap-4">
               <div className="bg-white/60 px-4 py-2 rounded-lg border border-emerald-100">
                 <p className="text-xs text-emerald-600 font-medium">Price</p>
-                <p className="text-lg font-semibold text-emerald-900">₹{results[0].price.toLocaleString()}</p>
+                <p className="text-lg font-semibold text-emerald-900">₹{recommendation.price.toLocaleString()}</p>
               </div>
               <div className="bg-white/60 px-4 py-2 rounded-lg border border-emerald-100">
-                <p className="text-xs text-emerald-600 font-medium">Match</p>
-                <p className="text-lg font-semibold text-emerald-900">{Math.round(results[0].score * 100)}%</p>
+                <p className="text-xs text-emerald-600 font-medium">Overall match</p>
+                <p className="text-lg font-semibold text-emerald-900">{Math.round(recommendation.score * 100)}%</p>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Results table */}
+      {/* Results table — re-ranks live by the chosen priority */}
       {hasSearched && !loading && (
         results.length === 0 ? (
           <div className="rounded-2xl border border-stone-200 bg-white p-8 text-center text-stone-500">
@@ -321,6 +393,7 @@ export default function BuyerSearch() {
                   <th className="px-6 py-4 font-medium">Warranty</th>
                   <th className="px-6 py-4 font-medium">MOQ</th>
                   <th className="px-6 py-4 font-medium">Stock</th>
+                  <th className="px-6 py-4 font-medium">Distance</th>
                   <th className="px-6 py-4 font-medium text-right">Action</th>
                 </tr>
               </thead>
@@ -339,6 +412,7 @@ export default function BuyerSearch() {
                     <td className="px-6 py-5 text-stone-600">{r.warranty_months ? `${r.warranty_months} mo` : "—"}</td>
                     <td className="px-6 py-5 text-stone-600">{r.moq ?? "—"}</td>
                     <td className="px-6 py-5 text-stone-600">{r.stock ?? "—"}</td>
+                    <td className="px-6 py-5 text-stone-600">{r.distanceKm != null ? `≈ ${Math.round(r.distanceKm)} km` : "—"}</td>
                     <td className="px-6 py-5 text-right">
                       <button
                         onClick={() => saveRfq(r.vendor_id, r.company_name || "Vendor", r.product_name, r.price)}
