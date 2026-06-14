@@ -11,6 +11,7 @@ export default function SelectRole() {
   const [step, setStep] = useState<"role" | "company">("role");
   const [role, setRole] = useState<"buyer" | "vendor" | null>(null);
   const [companyName, setCompanyName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
@@ -30,9 +31,14 @@ export default function SelectRole() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return router.push("/");
 
+    const updateData: any = { role, company_name: companyName.trim() };
+    if (role === "vendor" && contactEmail.trim()) {
+      updateData.contact_email = contactEmail.trim();
+    }
+
     const { error: dbErr } = await supabase
       .from("profiles")
-      .update({ role, company_name: companyName.trim() })
+      .update(updateData)
       .eq("id", user.id);
 
     if (dbErr) { setError(dbErr.message); setSaving(false); return; }
@@ -95,7 +101,24 @@ export default function SelectRole() {
                 autoFocus
                 className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3.5 text-stone-900 outline-none focus:border-[#c2410c] focus:ring-2 focus:ring-[#c2410c]/10 transition-all"
               />
-              {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+              
+              {role === "vendor" && (
+                <div className="mt-6">
+                  <label className="block text-sm font-medium text-stone-700 mb-2">
+                    Contact Email (For Buyers)
+                  </label>
+                  <input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => { setContactEmail(e.target.value); setError(""); }}
+                    onKeyDown={(e) => e.key === "Enter" && save()}
+                    placeholder="sales@techcorp.com"
+                    className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3.5 text-stone-900 outline-none focus:border-[#c2410c] focus:ring-2 focus:ring-[#c2410c]/10 transition-all"
+                  />
+                </div>
+              )}
+
+              {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
             </div>
 
             <button
@@ -110,10 +133,6 @@ export default function SelectRole() {
           </>
         )}
       </div>
-
-      <style>{`
-        @keyframes fadeUp { from {opacity:0;transform:translateY(12px)} to {opacity:1;transform:translateY(0)} }
-      `}</style>
     </main>
   );
 }

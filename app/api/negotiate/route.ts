@@ -24,6 +24,7 @@ ${JSON.stringify(vendors, null, 2)}
 
 Provide exactly 3 concise, highly actionable bullet points on how the buyer should negotiate with the top-ranked vendor to get a better deal. 
 Cite weaknesses in the top vendor (e.g. slow delivery) or competitor strengths (e.g. Vendor B is cheaper) where applicable to create leverage.
+CRITICAL: When referring to prices or savings, always use the Indian Rupee symbol "₹" or "INR". Do not use "$".
 Return the result as JSON with a single key "bullets" containing an array of exactly 3 strings.
 `;
 

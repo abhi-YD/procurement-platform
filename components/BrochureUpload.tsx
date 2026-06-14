@@ -22,6 +22,7 @@ type ProductRow = {
   delivery_days: ExtractedField<number | null>;
   moq: ExtractedField<number | null>;
   stock: ExtractedField<number | null>;
+  rating: ExtractedField<number | null>;
 };
 
 function ConfidenceDot({ level }: { level: string }) {
@@ -117,6 +118,7 @@ export default function BrochureUpload() {
       delivery_days: p.delivery_days.value,
       moq: p.moq.value,
       stock: p.stock?.value || null,
+      rating: p.rating?.value || null,
       embedding: embeddings[i] || null,
     }));
     
@@ -173,6 +175,7 @@ export default function BrochureUpload() {
                   <th className="px-4 py-3 font-medium w-28">Delivery (days)</th>
                   <th className="px-4 py-3 font-medium w-24">MOQ</th>
                   <th className="px-4 py-3 font-medium w-24">Stock</th>
+                  <th className="px-4 py-3 font-medium w-24">Rating</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
@@ -193,13 +196,15 @@ export default function BrochureUpload() {
                     <td className="px-3 py-2">
                       <div className="flex items-center bg-white rounded border border-transparent focus-within:border-[#c2410c] focus-within:ring-1 focus-within:ring-[#c2410c]/20 px-1 py-0.5">
                         <ConfidenceDot level={p.category?.confidence} />
-                        <input 
-                          type="text" 
-                          value={p.category?.value || ""} 
+                        <select 
+                          value={p.category?.value || "Other"} 
                           onChange={(e) => updateProduct(i, "category", e.target.value)}
-                          className="w-full bg-transparent outline-none text-xs text-stone-600 uppercase tracking-wider"
-                          placeholder="Category"
-                        />
+                          className="w-full bg-transparent outline-none text-xs text-stone-600 uppercase tracking-wider appearance-none cursor-pointer"
+                        >
+                          {["Laptops", "Desktops", "Monitors", "Keyboards", "Mice", "Storage", "Networking", "Accessories", "Other"].map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
                       </div>
                     </td>
                     <td className="px-3 py-2">
@@ -257,6 +262,21 @@ export default function BrochureUpload() {
                           type="number" 
                           value={p.stock?.value ?? ""} 
                           onChange={(e) => updateProduct(i, "stock", e.target.value ? Number(e.target.value) : null)}
+                          className="w-full bg-transparent outline-none tabular-nums"
+                          placeholder="—"
+                        />
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center bg-white rounded border border-transparent focus-within:border-[#c2410c] focus-within:ring-1 focus-within:ring-[#c2410c]/20 px-1 py-0.5">
+                        <ConfidenceDot level={p.rating?.confidence} />
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          min="0"
+                          max="5"
+                          value={p.rating?.value ?? ""} 
+                          onChange={(e) => updateProduct(i, "rating", e.target.value ? Number(e.target.value) : null)}
                           className="w-full bg-transparent outline-none tabular-nums"
                           placeholder="—"
                         />
@@ -343,16 +363,16 @@ export default function BrochureUpload() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                 </svg>
-                <span className="text-sm font-medium text-stone-600">Gemini is reading your brochure…</span>
+                <span className="text-sm font-medium text-stone-600">Agent is reading your brochure…</span>
               </div>
               <div className="p-0">
-                <div className="grid grid-cols-7 gap-3 px-5 py-3 border-b border-stone-100">
-                  {["Product", "Category", "Price", "Warranty", "Delivery", "MOQ", "Stock"].map((h, i) => (
+                <div className="grid grid-cols-8 gap-3 px-5 py-3 border-b border-stone-100">
+                  {["Product", "Category", "Price", "Warranty", "Delivery", "MOQ", "Stock", "Rating"].map((h, i) => (
                     <div key={i} className="h-3 bg-stone-100 rounded animate-pulse" style={{ animationDelay: `${i * 100}ms` }}></div>
                   ))}
                 </div>
                 {Array.from({ length: 4 }).map((_, row) => (
-                  <div key={row} className="grid grid-cols-7 gap-3 px-5 py-4 border-b border-stone-50">
+                  <div key={row} className="grid grid-cols-8 gap-3 px-5 py-4 border-b border-stone-50">
                     <div className="h-4 bg-stone-200 rounded animate-pulse" style={{ animationDelay: `${row * 150}ms`, width: `${70 + Math.random() * 30}%` }}></div>
                     <div className="h-4 bg-stone-100 rounded animate-pulse" style={{ animationDelay: `${row * 150 + 50}ms` }}></div>
                     <div className="h-4 bg-stone-100 rounded animate-pulse w-16" style={{ animationDelay: `${row * 150 + 100}ms` }}></div>
@@ -360,6 +380,7 @@ export default function BrochureUpload() {
                     <div className="h-4 bg-stone-100 rounded animate-pulse w-12" style={{ animationDelay: `${row * 150 + 200}ms` }}></div>
                     <div className="h-4 bg-stone-100 rounded animate-pulse w-10" style={{ animationDelay: `${row * 150 + 250}ms` }}></div>
                     <div className="h-4 bg-stone-100 rounded animate-pulse w-10" style={{ animationDelay: `${row * 150 + 300}ms` }}></div>
+                    <div className="h-4 bg-stone-100 rounded animate-pulse w-8" style={{ animationDelay: `${row * 150 + 350}ms` }}></div>
                   </div>
                 ))}
               </div>

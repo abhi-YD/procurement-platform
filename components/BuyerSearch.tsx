@@ -33,8 +33,14 @@ export default function BuyerSearch() {
   
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [results, setResults] = useState<(CatalogItem & { score: number, company_name?: string, breakdown?: ScoreBreakdown[] })[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [results, setResults] = useState<(CatalogItem & { score: number, company_name?: string, contact_email?: string, breakdown?: ScoreBreakdown[] })[]>([]);
   const [auditVendorId, setAuditVendorId] = useState<string | null>(null);
+  const [awardedRfq, setAwardedRfq] = useState<string | null>(null);
+  
+  const [feedbackModal, setFeedbackModal] = useState<{vendorId: string, companyName: string, product: string, price: number} | null>(null);
+  const [feedbackRating, setFeedbackRating] = useState<number>(0);
+  const [feedbackNotes, setFeedbackNotes] = useState<string>("");
   
   const [briefLoading, setBriefLoading] = useState(false);
   const [negotiationBrief, setNegotiationBrief] = useState<string[]>([]);
@@ -71,6 +77,7 @@ export default function BuyerSearch() {
 
     setLoading(true);
     setHasSearched(true);
+    setSearchError(null);
     setNegotiationBrief([]);
     setResults([]);
 
@@ -82,7 +89,12 @@ export default function BuyerSearch() {
         .select("id, vendor_id, product_name, category, price, warranty_months, delivery_days, moq, stock")
         .eq("product_name", product);
 
-      if (catalogErr) { console.error("Catalog fetch error:", catalogErr); setLoading(false); return; }
+      if (catalogErr) { 
+        console.error("Catalog fetch error:", catalogErr); 
+        setSearchError("Failed to fetch products. Please try again.");
+        setLoading(false); 
+        return; 
+      }
       valid = (catalogData || []) as CatalogItem[];
     } else {
       try {
@@ -103,6 +115,7 @@ export default function BuyerSearch() {
         }
       } catch(e) {
         console.error("Smart search error:", e);
+        setSearchError("Smart search failed to connect. Please try again.");
         setLoading(false);
         return;
       }
@@ -110,14 +123,14 @@ export default function BuyerSearch() {
 
     // Step 2: fetch company names separately for the vendor_ids we found
     const vendorIds = [...new Set(valid.map(c => c.vendor_id))];
-    const newMap: Record<string, string> = {};
+    const newMap: Record<string, {name: string, email: string}> = {};
     if (vendorIds.length > 0) {
       const { data: profileData } = await supabase
         .from("profiles")
-        .select("id, company_name")
+        .select("id, company_name, contact_email")
         .in("id", vendorIds);
       if (profileData) {
-        profileData.forEach(p => { if (p.company_name) newMap[p.id] = p.company_name; });
+        profileData.forEach(p => { if (p.company_name) newMap[p.id] = { name: p.company_name, email: p.contact_email }; });
       }
     }
 
@@ -131,7 +144,8 @@ export default function BuyerSearch() {
 
     const ranked = scoreVendors(valid, PRESETS[priority]).map((r) => ({
       ...r,
-      company_name: newMap[r.vendor_id] || `Vendor ${r.vendor_id.slice(0, 8)}`,
+      company_name: newMap[r.vendor_id]?.name || `Vendor ${r.vendor_id.slice(0, 8)}`,
+      contact_email: newMap[r.vendor_id]?.email,
     }));
     setResults(ranked);
 
@@ -173,8 +187,9 @@ export default function BuyerSearch() {
 
   const savings = getSavings();
 
-  const saveRfq = async (vendorId: string, companyName: string, selectedProduct: string, selectedPrice: number) => {
+  const saveRfq = async (vendorId: string, companyName: string, selectedProduct: string, selectedPrice: number, rating?: number, notes?: string) => {
     setSavingRfq(vendorId);
+    setFeedbackModal(null);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     
@@ -194,39 +209,32 @@ export default function BuyerSearch() {
       quantity: Number(quantity) || 1,
       price_per_unit: selectedPrice,
       saved_amount: savedAmount,
-      priority
+      priority,
+      experience_rating: rating || null,
+      feedback_notes: notes || null
     });
-    router.push("/dashboard/history");
+    setAwardedRfq(vendorId);
+    setTimeout(() => {
+      router.push("/dashboard/history");
+    }, 1500);
   };
+
+  if (catalogMeta.length === 0) {
+    return (
+      <div className="max-w-6xl w-full flex flex-col items-center justify-center gap-4 py-20 text-center animate-[fadeUp_0.4s_ease-out_both]">
+        <div className="w-16 h-16 rounded-2xl bg-stone-100 flex items-center justify-center text-3xl mb-2">📦</div>
+        <h1 className={`${fraunces.className} text-2xl text-stone-900`}>Catalogue is empty</h1>
+        <p className="text-stone-500 max-w-md">No vendors have listed products yet. Check back soon or invite vendors to upload their brochures.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl w-full flex flex-col gap-8 animate-[fadeUp_0.4s_ease-out_both]">
       
-      {/* Category Selection Step */}
       <div className="mb-2">
         <h1 className={`${fraunces.className} text-2xl text-stone-900`}>Find the right vendor</h1>
-        <p className="mt-2 text-stone-500">Pick a category, choose a product, and we&apos;ll rank the vendors that sell it.</p>
-        
-        {categories.length > 0 && (
-          <div className="mt-6 flex overflow-x-auto pb-4 gap-3 snap-x scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
-            {categories.map((c) => (
-              <button
-                key={c}
-                onClick={() => {
-                  setSelectedCategory(c);
-                  setProduct("");
-                }}
-                className={`snap-start shrink-0 rounded-xl border p-4 text-left font-medium transition-all active:scale-[0.98] ${
-                  selectedCategory === c 
-                    ? "border-[#c2410c] bg-[#fff7f2] shadow-[0_0_0_1px_#c2410c] text-stone-900" 
-                    : "border-stone-300 bg-white text-stone-700 hover:border-stone-400"
-                }`}
-              >
-                <div className="text-sm tracking-wide uppercase">{c}</div>
-              </button>
-            ))}
-          </div>
-        )}
+        <p className="mt-2 text-stone-500">Pick what you need, and we&apos;ll rank the vendors that sell it.</p>
       </div>
 
       {/* RFQ Builder Form */}
@@ -252,18 +260,34 @@ export default function BuyerSearch() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative">
           <div className="col-span-1 md:col-span-3">
             {searchMode === "exact" ? (
-              <>
-                <label className="block text-sm font-medium text-stone-700 mb-2">What do you need?</label>
-                <select
-                  value={product}
-                  onChange={(e) => setProduct(e.target.value)}
-                  disabled={!selectedCategory}
-                  className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c] disabled:opacity-50"
-                >
-                  <option value="" disabled>{selectedCategory ? "Select a product..." : "Pick a category first..."}</option>
-                  {availableProducts.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">Category</label>
+                  <select
+                    value={selectedCategory || ""}
+                    onChange={(e) => {
+                      setSelectedCategory(e.target.value);
+                      setProduct("");
+                    }}
+                    className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c]"
+                  >
+                    <option value="" disabled>Select a category...</option>
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">What do you need?</label>
+                  <select
+                    value={product}
+                    onChange={(e) => setProduct(e.target.value)}
+                    disabled={!selectedCategory}
+                    className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c] disabled:opacity-50"
+                  >
+                    <option value="" disabled>{selectedCategory ? "Select a product..." : "Pick a category first..."}</option>
+                    {availableProducts.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+              </div>
             ) : (
               <>
                 <label className="block text-sm font-medium text-stone-700 mb-2">Describe what you need (AI Search)</label>
@@ -372,16 +396,17 @@ export default function BuyerSearch() {
         <div className="animate-[fadeUp_0.3s_ease-out_both]">
           <div className="rounded-2xl border border-stone-200 bg-white overflow-hidden shadow-sm">
             <div className="p-6 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
-              <div className="h-6 w-48 bg-stone-200 rounded-lg animate-pulse"></div>
+              <span className="text-[#c2410c] text-lg animate-pulse">✨</span>
+              <span className="text-sm font-medium text-stone-600 animate-pulse">Agent is comparing vendors...</span>
             </div>
             <div className="p-0">
-              <div className="grid grid-cols-8 gap-0 px-6 py-4 border-b border-stone-100">
-                {Array.from({ length: 8 }).map((_, i) => (
+              <div className="grid grid-cols-9 gap-0 px-6 py-4 border-b border-stone-100">
+                {Array.from({ length: 9 }).map((_, i) => (
                   <div key={i} className="h-3 bg-stone-100 rounded animate-pulse" style={{ animationDelay: `${i * 80}ms` }}></div>
                 ))}
               </div>
               {Array.from({ length: 3 }).map((_, row) => (
-                <div key={row} className="grid grid-cols-8 gap-4 px-6 py-5 border-b border-stone-50" style={{ animationDelay: `${row * 120}ms` }}>
+                <div key={row} className="grid grid-cols-9 gap-4 px-6 py-5 border-b border-stone-50" style={{ animationDelay: `${row * 120}ms` }}>
                   <div className="col-span-2 flex items-center gap-2">
                     <div className="w-2.5 h-2.5 rounded-full bg-stone-200 animate-pulse"></div>
                     <div className="h-4 w-24 bg-stone-200 rounded animate-pulse"></div>
@@ -390,6 +415,7 @@ export default function BuyerSearch() {
                   <div className="h-4 w-16 bg-stone-100 rounded animate-pulse"></div>
                   <div className="h-4 w-14 bg-stone-100 rounded animate-pulse"></div>
                   <div className="h-4 w-14 bg-stone-100 rounded animate-pulse"></div>
+                  <div className="h-4 w-10 bg-stone-100 rounded animate-pulse"></div>
                   <div className="h-4 w-10 bg-stone-100 rounded animate-pulse"></div>
                   <div className="h-4 w-10 bg-stone-100 rounded animate-pulse"></div>
                 </div>
@@ -405,7 +431,7 @@ export default function BuyerSearch() {
           <div className="flex-1 rounded-2xl border border-stone-200 bg-white overflow-hidden shadow-sm flex flex-col">
             <div className="p-6 border-b border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-stone-50">
               <h2 className={`${fraunces.className} text-xl text-stone-900`}>
-                Vendor Comparison for &ldquo;{product}&rdquo;
+                Vendor Comparison for &ldquo;{searchMode === "smart" ? smartQuery : product}&rdquo;
               </h2>
               {savings !== null && savings > 0 && (
                 <span className="inline-flex items-center px-4 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-sm font-medium border border-emerald-200/50 shadow-sm">
@@ -414,7 +440,11 @@ export default function BuyerSearch() {
               )}
             </div>
 
-            {results.length === 0 ? (
+            {searchError ? (
+              <div className="p-8 text-center text-red-600">
+                {searchError}
+              </div>
+            ) : results.length === 0 ? (
               <div className="p-8 text-center text-stone-500">
                 No vendors found matching your criteria. Try adjusting the quantity or deadline.
               </div>
@@ -430,6 +460,7 @@ export default function BuyerSearch() {
                       <th className="px-6 py-4 font-medium w-32">Warranty</th>
                       <th className="px-6 py-4 font-medium w-32">MOQ</th>
                       <th className="px-6 py-4 font-medium w-32">Stock</th>
+                      <th className="px-6 py-4 font-medium w-32">Rating</th>
                       <th className="px-6 py-4 font-medium w-32 text-right sticky right-0 bg-stone-50/95 backdrop-blur-sm shadow-[-8px_0_15px_-3px_rgba(0,0,0,0.05)] border-l border-stone-100 z-10">Action</th>
                     </tr>
                   </thead>
@@ -462,13 +493,28 @@ export default function BuyerSearch() {
                         <td className="px-6 py-5 text-stone-600">{r.warranty_months ? `${r.warranty_months} mo` : '—'}</td>
                         <td className="px-6 py-5 text-stone-600">{r.moq ?? '—'}</td>
                         <td className="px-6 py-5 text-stone-600">{r.stock ?? '—'}</td>
-                        <td className={`px-6 py-5 text-right sticky right-0 shadow-[-8px_0_15px_-3px_rgba(0,0,0,0.05)] border-l border-stone-100/50 ${i === 0 ? 'bg-[#fff7f2]' : 'bg-white'}`}>
+                        <td className="px-6 py-5 text-stone-600">
+                          {r.rating ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-amber-500">★</span> {r.rating}
+                            </div>
+                          ) : '—'}
+                        </td>
+                        <td className="px-6 py-5 text-right sticky right-0 shadow-[-8px_0_15px_-3px_rgba(0,0,0,0.05)] border-l border-stone-100/50 ${i === 0 ? 'bg-[#fff7f2]' : 'bg-white'}">
                           <button
-                            onClick={() => saveRfq(r.vendor_id, r.company_name || "Vendor", r.product_name, r.price)}
-                            disabled={savingRfq === r.vendor_id}
-                            className="px-4 py-2 bg-stone-900 text-white text-xs font-medium rounded-lg hover:bg-[#c2410c] transition-colors disabled:opacity-50"
+                            onClick={() => {
+                              setFeedbackModal({ vendorId: r.vendor_id, companyName: r.company_name || "Vendor", product: r.product_name, price: r.price });
+                              setFeedbackRating(0);
+                              setFeedbackNotes("");
+                            }}
+                            disabled={savingRfq === r.vendor_id || awardedRfq === r.vendor_id}
+                            className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 ${
+                              awardedRfq === r.vendor_id 
+                                ? "bg-emerald-600 text-white" 
+                                : "bg-stone-900 text-white hover:bg-[#c2410c]"
+                            }`}
                           >
-                            {savingRfq === r.vendor_id ? "Saving..." : "Award"}
+                            {awardedRfq === r.vendor_id ? "Awarded ✓" : savingRfq === r.vendor_id ? "Saving..." : "Award"}
                           </button>
                         </td>
                       </tr>
@@ -506,7 +552,7 @@ export default function BuyerSearch() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-stone-500 text-center py-4">Generating strategy...</p>
+                <p className="text-sm text-stone-500 text-center py-4">Strategy not available.</p>
               )}
             </div>
           )}
@@ -526,7 +572,9 @@ export default function BuyerSearch() {
               <div className="p-6 border-b border-stone-200 bg-stone-50 flex items-center justify-between">
                 <div>
                   <h3 className={`${fraunces.className} text-lg text-stone-900`}>Scoring Breakdown</h3>
-                  <p className="text-sm text-stone-500 mt-1">{vendor.company_name}</p>
+                  <p className="text-sm text-stone-500 mt-1">
+                    {vendor.company_name} {vendor.contact_email && <span className="text-stone-400 ml-1">({vendor.contact_email})</span>}
+                  </p>
                 </div>
                 <button onClick={() => setAuditVendorId(null)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-stone-200 transition-colors text-stone-500">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -574,6 +622,53 @@ export default function BuyerSearch() {
           </div>
         );
       })()}
+
+      {feedbackModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-xl animate-[fadeUp_0.3s_ease-out_both] flex flex-col relative">
+            <h3 className={`${fraunces.className} text-2xl text-stone-900 mb-2`}>Rate Vendor</h3>
+            <p className="text-stone-500 text-sm mb-6">You are awarding this RFQ to <strong>{feedbackModal.companyName}</strong>. Please rate your expected experience to help us improve future matches.</p>
+            
+            <div className="flex items-center gap-2 mb-6 justify-center">
+              {[1, 2, 3, 4, 5].map(star => (
+                <button 
+                  key={star} 
+                  onClick={() => setFeedbackRating(star)}
+                  className={`text-4xl transition-transform hover:scale-110 ${feedbackRating >= star ? 'text-amber-400' : 'text-stone-200'}`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              value={feedbackNotes}
+              onChange={e => setFeedbackNotes(e.target.value)}
+              placeholder="Any specific reasons for choosing this vendor? (Optional)"
+              className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c] min-h-[100px] resize-y mb-6 text-sm"
+            />
+
+            <div className="flex gap-3 mt-auto">
+              <button
+                onClick={() => saveRfq(feedbackModal.vendorId, feedbackModal.companyName, feedbackModal.product, feedbackModal.price)}
+                className="flex-1 px-4 py-3 text-sm font-medium text-stone-600 bg-stone-100 rounded-xl hover:bg-stone-200 transition-colors"
+              >
+                Skip & Save
+              </button>
+              <button
+                onClick={() => saveRfq(feedbackModal.vendorId, feedbackModal.companyName, feedbackModal.product, feedbackModal.price, feedbackRating, feedbackNotes)}
+                disabled={feedbackRating === 0}
+                className="flex-1 px-4 py-3 text-sm font-medium text-white bg-[#c2410c] rounded-xl hover:bg-[#9a3412] transition-colors disabled:opacity-50"
+              >
+                Submit & Save
+              </button>
+            </div>
+            <button onClick={() => setFeedbackModal(null)} className="absolute top-4 right-4 text-stone-400 hover:text-stone-900">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes fadeUp { from {opacity:0;transform:translateY(12px)} to {opacity:1;transform:translateY(0)} }
