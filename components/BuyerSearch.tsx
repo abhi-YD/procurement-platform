@@ -1,3 +1,5 @@
+
+
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -696,6 +698,7 @@ export default function BuyerSearch() {
       })()}
 
       {feedbackModal && (
+
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
           <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-xl animate-[fadeUp_0.3s_ease-out_both] flex flex-col relative">
             <h3 className={`${fraunces.className} text-2xl text-stone-900 mb-2`}>Rate Vendor</h3>
