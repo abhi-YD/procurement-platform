@@ -168,15 +168,14 @@ export default function BrochureUpload() {
             <table className="w-full text-sm">
               <thead className="bg-stone-50 text-left text-stone-500 border-b border-stone-200">
                 <tr>
-                  <th className="px-4 py-3 font-medium min-w-[200px]">Product</th>
-                  <th className="px-4 py-3 font-medium min-w-[140px]">Category</th>
-                  <th className="px-4 py-3 font-medium w-28">Price (₹)</th>
-                  <th className="px-4 py-3 font-medium w-28">Warranty (mo)</th>
-                  <th className="px-4 py-3 font-medium w-28">Delivery (days)</th>
-                  <th className="px-4 py-3 font-medium w-24">MOQ</th>
-                  <th className="px-4 py-3 font-medium w-24">Stock</th>
-                  <th className="px-4 py-3 font-medium w-24">Rating</th>
-                </tr>
+  <th className="px-4 py-3 font-medium min-w-[240px]">Product</th>
+  <th className="px-4 py-3 font-medium min-w-[150px]">Category</th>
+  <th className="px-4 py-3 font-medium min-w-[120px]">Price (₹)</th>
+  <th className="px-4 py-3 font-medium min-w-[110px]">Warranty (mo)</th>
+  <th className="px-4 py-3 font-medium min-w-[110px]">Delivery (days)</th>
+  <th className="px-4 py-3 font-medium min-w-[90px]">MOQ</th>
+  <th className="px-4 py-3 font-medium min-w-[90px]">Stock</th>
+</tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
                 {products.map((p, i) => (
@@ -262,21 +261,6 @@ export default function BrochureUpload() {
                           type="number" 
                           value={p.stock?.value ?? ""} 
                           onChange={(e) => updateProduct(i, "stock", e.target.value ? Number(e.target.value) : null)}
-                          className="w-full bg-transparent outline-none tabular-nums"
-                          placeholder="—"
-                        />
-                      </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center bg-white rounded border border-transparent focus-within:border-[#c2410c] focus-within:ring-1 focus-within:ring-[#c2410c]/20 px-1 py-0.5">
-                        <ConfidenceDot level={p.rating?.confidence} />
-                        <input 
-                          type="number" 
-                          step="0.1"
-                          min="0"
-                          max="5"
-                          value={p.rating?.value ?? ""} 
-                          onChange={(e) => updateProduct(i, "rating", e.target.value ? Number(e.target.value) : null)}
                           className="w-full bg-transparent outline-none tabular-nums"
                           placeholder="—"
                         />
