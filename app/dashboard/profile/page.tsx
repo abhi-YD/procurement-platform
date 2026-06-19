@@ -1,17 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { Fraunces } from "next/font/google";
+import { useEffect, useState } from"react";
+import { createClient } from"@/lib/supabase/client";
 
-const fraunces = Fraunces({ subsets: ["latin"], weight: ["400", "500"] });
 
 export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [companyName, setCompanyName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
-  const [message, setMessage] = useState<{ type: "success" | "error", text: string } | null>(null);
+  const [message, setMessage] = useState<{ type:"success" |"error", text: string } | null>(null);
 
   const supabase = createClient();
 
@@ -27,8 +25,8 @@ export default function ProfilePage() {
         .single();
 
       if (data) {
-        setCompanyName(data.company_name || "");
-        setContactEmail(data.contact_email || "");
+        setCompanyName(data.company_name ||"");
+        setContactEmail(data.contact_email ||"");
       }
       setLoading(false);
     }
@@ -52,9 +50,9 @@ export default function ProfilePage() {
       .eq("id", user.id);
 
     if (error) {
-      setMessage({ type: "error", text: error.message });
+      setMessage({ type:"error", text: error.message });
     } else {
-      setMessage({ type: "success", text: "Profile updated successfully!" });
+      setMessage({ type:"success", text:"Profile updated successfully!" });
     }
     setSaving(false);
   };
@@ -62,7 +60,7 @@ export default function ProfilePage() {
   return (
     <div className="p-8 max-w-2xl mx-auto animate-[fadeUp_0.4s_ease-out_both]">
       <div className="mb-8">
-        <h1 className={`${fraunces.className} text-3xl text-stone-900`}>Your Profile</h1>
+        <h1 className={`text-3xl text-stone-900`}>Your Profile</h1>
         <p className="mt-2 text-stone-500">Manage your company details and contact information.</p>
       </div>
 
@@ -98,7 +96,7 @@ export default function ProfilePage() {
             </div>
 
             {message && (
-              <div className={`p-4 rounded-xl text-sm ${message.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+              <div className={`p-4 rounded-xl text-sm ${message.type ==='success' ?'bg-emerald-50 text-emerald-700 border border-emerald-200' :'bg-red-50 text-red-700 border border-red-200'}`}>
                 {message.text}
               </div>
             )}
@@ -108,7 +106,7 @@ export default function ProfilePage() {
               disabled={saving}
               className="px-6 py-3 bg-stone-900 text-white font-medium rounded-xl hover:bg-[#c2410c] transition-colors disabled:opacity-50"
             >
-              {saving ? "Saving..." : "Save Changes"}
+              {saving ?"Saving..." :"Save Changes"}
             </button>
           </form>
         )}

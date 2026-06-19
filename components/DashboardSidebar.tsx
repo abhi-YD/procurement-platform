@@ -1,65 +1,66 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import SignOutButton from "./SignOutButton";
+import Link from"next/link";
+import { usePathname } from"next/navigation";
+import { Search, Handshake, Trophy, History, User, Upload } from"lucide-react";
 
-export default function DashboardSidebar({ role, email }: { role: string; email: string }) {
+type DashboardSidebarProps = {
+  role: string;
+  onLinkClick?: () => void;
+};
+
+export default function DashboardSidebar({ role, onLinkClick }: DashboardSidebarProps) {
   const pathname = usePathname();
 
   const buyerLinks = [
-    { name: "Compare Vendors", href: "/dashboard", icon: "🔍" },
-    { name: "Leaderboard", href: "/dashboard/leaderboard", icon: "🏆" },
-    { name: "RFQ History", href: "/dashboard/history", icon: "📜" },
-    { name: "Profile", href: "/dashboard/profile", icon: "👤" },
+    { name:"Compare Vendors", href:"/dashboard", icon: <Search className="w-5 h-5" /> },
+    { name:"Negotiations", href:"/dashboard/deals", icon: <Handshake className="w-5 h-5" /> },
+    { name:"Leaderboard", href:"/dashboard/leaderboard", icon: <Trophy className="w-5 h-5" /> },
+    { name:"RFQ History", href:"/dashboard/history", icon: <History className="w-5 h-5" /> },
+    { name:"Profile", href:"/dashboard/profile", icon: <User className="w-5 h-5" /> },
   ];
 
   const vendorLinks = [
-    { name: "Upload Brochure", href: "/dashboard", icon: "📄" },
-    { name: "Awards & History", href: "/dashboard/vendor-history", icon: "📜" },
-    { name: "Profile", href: "/dashboard/profile", icon: "👤" },
+    { name:"Onboarding & Products", href:"/dashboard", icon: <Upload className="w-5 h-5" /> },
+    { name:"Negotiations", href:"/dashboard/deals", icon: <Handshake className="w-5 h-5" /> },
+    { name:"Awards & History", href:"/dashboard/vendor-history", icon: <History className="w-5 h-5" /> },
+    { name:"Profile", href:"/dashboard/profile", icon: <User className="w-5 h-5" /> },
   ];
 
-  const links = role === "buyer" ? buyerLinks : vendorLinks;
+  const links = role ==="buyer" ? buyerLinks : vendorLinks;
 
   return (
-    <aside className="w-64 bg-white border-r border-stone-200 flex flex-col h-screen sticky top-0 shrink-0">
-      {/* Logo */}
-      <div className="h-16 flex items-center px-6 border-b border-stone-200">
-        <span className="text-sm font-medium tracking-[0.2em] text-stone-700">
-          PROCURE<span className="text-[#c2410c]">·</span>AI
+    <aside className="w-64 bg-white border-r border-neutral-200/80 flex flex-col h-screen sticky top-0 shrink-0 z-20">
+      {/* Brand logo header */}
+      <div className="h-16 flex items-center px-6 border-b border-neutral-200/60 bg-white">
+        <span className="text-sm font-bold tracking-[0.2em] text-[#0F1E3C]">
+          PROCURE<span className="text-[#E8A838]">·</span>AI
         </span>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-6 px-4 flex flex-col gap-2">
+      {/* Nav Link List */}
+      <nav className="flex-1 overflow-y-auto py-6 px-4 flex flex-col gap-1.5">
         {links.map((link) => {
-          const isActive = pathname === link.href;
+          const isActive = pathname === link.href || (link.href !=="/dashboard" && pathname.startsWith(link.href));
           return (
             <Link
               key={link.name}
               href={link.href}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+              onClick={onLinkClick}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all cursor-pointer text-sm font-medium ${
                 isActive 
-                  ? "bg-[#fff7f2] text-[#c2410c] font-medium shadow-[0_0_0_1px_#c2410c]" 
-                  : "text-stone-600 hover:bg-stone-50 hover:text-stone-900"
+                  ?"bg-[#0F1E3C]/5 text-[#0F1E3C] border-l-4 border-[#E8A838] pl-[12px]" 
+                  :"text-[#6B7280] hover:bg-neutral-50 hover:text-[#0F1E3C]"
               }`}
             >
-              <span className="text-lg">{link.icon}</span>
-              <span className="text-sm">{link.name}</span>
+              <span className={`shrink-0 ${isActive ?"text-[#0F1E3C]" :"text-[#6B7280]"}`}>
+                {link.icon}
+              </span>
+              <span>{link.name}</span>
             </Link>
           );
         })}
       </nav>
-
-      {/* Footer User Info */}
-      <div className="p-4 border-t border-stone-200 bg-stone-50/50">
-        <div className="flex flex-col gap-1 mb-4 px-2">
-          <span className="text-xs font-semibold text-stone-400 uppercase tracking-wider">{role}</span>
-          <span className="text-sm text-stone-900 truncate" title={email}>{email}</span>
-        </div>
-        <SignOutButton />
-      </div>
     </aside>
   );
 }

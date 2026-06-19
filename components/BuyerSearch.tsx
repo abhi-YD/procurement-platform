@@ -1,42 +1,39 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import dynamic from "next/dynamic";
-import { Fraunces } from "next/font/google";
-import { createClient } from "@/lib/supabase/client";
-import { scoreVendors, PRESETS, CatalogItem, ScoreBreakdown } from "@/lib/scoring";
-import { haversineKm } from "@/lib/distance";
-import { geocodeAddress } from "@/lib/geocode";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useMemo } from"react";
+import { createClient } from"@/lib/supabase/client";
+import { scoreVendors, PRESETS, CatalogItem, ScoreBreakdown } from"@/lib/scoring";
+import { haversineKm } from"@/lib/distance";
+import { useRouter } from"next/navigation";
 
-const fraunces = Fraunces({ subsets: ["latin"], weight: ["500", "600"] });
-
-const LocationMap = dynamic(() => import("@/components/map/LocationMap"), {
-  ssr: false,
-  loading: () => <div className="h-56 rounded-xl bg-stone-100 animate-pulse" />,
-});
+// Modular Subcomponents
+import VendorSearchForm from"./VendorSearchForm";
+import ActiveConstraints from"./ActiveConstraints";
+import DeliveryDestination from"./DeliveryDestination";
+import VendorResultsGrid from"./VendorResultsGrid";
 
 type Pos = { lat: number; lng: number };
 
-const OPTIONS = [
-  { key: "price_critical", label: "Lowest price", desc: "Cost matters most" },
-  { key: "fast_delivery", label: "Fast delivery", desc: "I need it quickly" },
-  { key: "quality_first", label: "Quality & warranty", desc: "Reliability over price" },
-  { key: "balanced", label: "Balanced", desc: "Weigh everything evenly" },
-];
+type EnhancedVendor = CatalogItem & {
+  score: number;
+  company_name?: string;
+  contact_email?: string;
+  breakdown?: ScoreBreakdown[];
+  distanceKm?: number | null;
+  vendorPos?: Pos | null;
+};
 
 export default function BuyerSearch() {
   const [catalogMeta, setCatalogMeta] = useState<{product_name: string, category: string, stock: number | null}[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  // Map of vendor_id → company_name for display
-  const [companyMap, setCompanyMap] = useState<Record<string, string>>({});
   
+  // Search parameters
   const [product, setProduct] = useState<string>("");
   const [priority, setPriority] = useState("balanced");
-  const [quantity, setQuantity] = useState<number | "">("");
-  const [deadline, setDeadline] = useState<number | "">("");
+  const [quantity, setQuantity] = useState<number |"">("");
+  const [deadline, setDeadline] = useState<number |"">("");
   
-  const [searchMode, setSearchMode] = useState<"exact" | "smart">("exact");
+  const [searchMode, setSearchMode] = useState<"catalog" |"semantic">("catalog");
   const [smartQuery, setSmartQuery] = useState("");
   const [savingRfq, setSavingRfq] = useState<string | null>(null);
   const router = useRouter();
@@ -44,22 +41,26 @@ export default function BuyerSearch() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [results, setResults] = useState<(CatalogItem & { score: number, company_name?: string, contact_email?: string, breakdown?: ScoreBreakdown[], distanceKm?: number | null, vendorPos?: Pos | null })[]>([]);
+  const [results, setResults] = useState<EnhancedVendor[]>([]);
+  
+  // Scoring Sliders State
+  const [priceWeight, setPriceWeight] = useState(33);
+  const [proximityWeight, setProximityWeight] = useState(33);
+  const [deliveryWeight, setDeliveryWeight] = useState(34);
+
+  // Delivery destination location state
   const [buyerPos, setBuyerPos] = useState<Pos | null>(null);
   const [locationAddress, setLocationAddress] = useState("");
-  const [locationSearching, setLocationSearching] = useState(false);
-  const [auditVendorId, setAuditVendorId] = useState<string | null>(null);
+  const [maxDistance, setMaxDistance] = useState<number>(500); // 500 ="Any"
+
   const [awardedRfq, setAwardedRfq] = useState<string | null>(null);
-  
   const [feedbackModal, setFeedbackModal] = useState<{vendorId: string, companyName: string, product: string, price: number} | null>(null);
   const [feedbackRating, setFeedbackRating] = useState<number>(0);
   const [feedbackNotes, setFeedbackNotes] = useState<string>("");
-  
-  const [briefLoading, setBriefLoading] = useState(false);
-  const [negotiationBrief, setNegotiationBrief] = useState<string[]>([]);
 
   const supabase = useMemo(() => createClient(), []);
 
+  // Fetch unique catalogue metadata on mount
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from("vendor_catalog").select("product_name, category, stock");
@@ -75,32 +76,31 @@ export default function BuyerSearch() {
     return Array.from(new Set(catalogMeta.filter(d => d.category === selectedCategory).map((d) => d.product_name))).sort();
   }, [catalogMeta, selectedCategory]);
 
-  const maxStock = useMemo(() => {
-    if (!product) return null;
-    const matching = catalogMeta.filter(c => c.product_name === product && c.stock != null);
-    if (matching.length === 0) return null; // No stock data available
-    return Math.max(...matching.map(m => m.stock!));
-  }, [product, catalogMeta]);
-
-  const overStockLimit = maxStock !== null && quantity !== "" && Number(quantity) > maxStock;
-
-  const search = async () => {
-    if (searchMode === "exact" && (!product || overStockLimit)) return;
-    if (searchMode === "smart" && !smartQuery.trim()) return;
+  const search = async (overrideParams?: {
+    searchMode?:"catalog" |"semantic";
+    smartQuery?: string;
+    quantity?: number;
+    locationAddress?: string;
+    buyerPos?: Pos;
+  }) => {
+    const activeSearchMode = overrideParams?.searchMode ?? searchMode;
+    const activeSmartQuery = overrideParams?.smartQuery ?? smartQuery;
+    const activeQuantity = overrideParams?.quantity ?? quantity;
+    const activeBuyerPos = overrideParams?.buyerPos ?? buyerPos;
 
     setLoading(true);
     setHasSearched(true);
     setSearchError(null);
-    setNegotiationBrief([]);
     setResults([]);
 
     let valid: CatalogItem[] = [];
 
-    if (searchMode === "exact") {
+    if (activeSearchMode ==="catalog") {
+      const activeProduct = product;
       const { data: catalogData, error: catalogErr } = await supabase
         .from("vendor_catalog")
         .select("id, vendor_id, product_name, category, price, warranty_months, delivery_days, moq, stock")
-        .eq("product_name", product);
+        .eq("product_name", activeProduct);
 
       if (catalogErr) { 
         console.error("Catalog fetch error:", catalogErr); 
@@ -112,14 +112,14 @@ export default function BuyerSearch() {
     } else {
       try {
         const res = await fetch("/api/embed", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ texts: [smartQuery] })
+          method:"POST",
+          headers: {"Content-Type":"application/json" },
+          body: JSON.stringify({ texts: [activeSmartQuery] })
         });
         const data = await res.json();
         if (data.embeddings && data.embeddings.length > 0) {
           const { data: rpcData, error: rpcErr } = await supabase.rpc("match_products", {
-            query_embedding: `[${data.embeddings[0].join(',')}]`,
+            query_embedding:`[${data.embeddings[0].join(',')}]`,
             match_threshold: 0.5,
             match_count: 50
           });
@@ -128,13 +128,12 @@ export default function BuyerSearch() {
         }
       } catch(e) {
         console.error("Smart search error:", e);
-        setSearchError("Smart search failed to connect. Please try again.");
+        setSearchError("Smart search failed. Please try again.");
         setLoading(false);
         return;
       }
     }
 
-    // Step 2: fetch company names + coordinates separately for the vendor_ids we found
     const vendorIds = [...new Set(valid.map(c => c.vendor_id))];
     const newMap: Record<string, {name: string, email: string}> = {};
     const coordMap: Record<string, Pos> = {};
@@ -153,81 +152,72 @@ export default function BuyerSearch() {
       }
     }
 
-    // Filter by quantity and deadline
+    // Filter by volume & deadline SLA parameters
     valid = valid.filter((c) => {
-      if (quantity && c.moq && quantity < c.moq) return false;
-      if (quantity && c.stock && quantity > c.stock) return false;
+      if (activeQuantity && c.moq && activeQuantity < c.moq) return false;
+      if (activeQuantity && c.stock && activeQuantity > c.stock) return false;
       if (deadline && c.delivery_days && c.delivery_days > deadline) return false;
       return true;
     });
 
-    const ranked = scoreVendors(valid, PRESETS[priority]).map((r) => {
+    // Scoring weights presets mapping
+    let customWeights = PRESETS[priority] || PRESETS.balanced;
+    if (priority ==="custom") {
+      const sum = priceWeight + deliveryWeight + 50; // Baseline rating/warranty constants
+      customWeights = {
+        price: priceWeight / sum,
+        delivery_days: deliveryWeight / sum,
+        warranty_months: 25 / sum,
+        rating: 25 / sum,
+      };
+    }
+
+    // Apply ranking calculations & proximity calculations
+    let ranked = scoreVendors(valid, customWeights).map((r) => {
       const vendorPos = coordMap[r.vendor_id];
-      const distanceKm = buyerPos && vendorPos ? haversineKm(buyerPos, vendorPos) : null;
+      const distanceKm = activeBuyerPos && vendorPos ? haversineKm(activeBuyerPos, vendorPos) : null;
       return {
         ...r,
-        company_name: newMap[r.vendor_id]?.name || `Vendor ${r.vendor_id.slice(0, 8)}`,
+        company_name: newMap[r.vendor_id]?.name ||`Vendor ${r.vendor_id.slice(0, 8)}`,
         contact_email: newMap[r.vendor_id]?.email,
         distanceKm,
         vendorPos,
       };
     });
-    setResults(ranked);
 
-    if (ranked.length > 0) {
-      setBriefLoading(true);
-      try {
-        const res = await fetch("/api/negotiate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            priority,
-            vendors: ranked.slice(0, 3).map(r => ({
-              company: r.company_name,
-              price: r.price,
-              delivery: r.delivery_days,
-              warranty: r.warranty_months,
-              score: r.score,
-            }))
-          }),
-        });
-        const briefData = await res.json();
-        if (briefData.bullets) setNegotiationBrief(briefData.bullets);
-      } catch (e) {
-        console.error("Failed to load brief", e);
-      }
-      setBriefLoading(false);
+    // Filter by max distance radius (if not"Any" which is 500)
+    if (maxDistance < 500) {
+      ranked = ranked.filter(r => r.distanceKm == null || r.distanceKm <= maxDistance);
     }
+
+    setResults(ranked);
     setLoading(false);
   };
 
-  const getSavings = () => {
-    if (results.length < 2 || !quantity) return null;
-    const avgPrice = results.reduce((acc, r) => acc + r.price, 0) / results.length;
-    const bestPrice = results[0].price;
-    if (bestPrice >= avgPrice) return null;
-    
-    const saved = (avgPrice - bestPrice) * Number(quantity);
-    return Math.round(saved);
+  // Quick preset query handler
+  const handleTryPreset = async () => {
+    setSearchMode("semantic");
+    setSmartQuery("Office supplies");
+    setQuantity(500);
+    setLocationAddress("Mumbai, India");
+    const mumbaiPos = { lat: 19.0760, lng: 72.8777 };
+    setBuyerPos(mumbaiPos);
+
+    // Trigger search instantly
+    await search({
+      searchMode:"semantic",
+      smartQuery:"Office supplies",
+      quantity: 500,
+      locationAddress:"Mumbai, India",
+      buyerPos: mumbaiPos
+    });
   };
 
-  const handleAddressSearch = async () => {
-    if (!locationAddress.trim()) return;
-    setLocationSearching(true);
-    const result = await geocodeAddress(locationAddress);
-    setLocationSearching(false);
-    if (result) setBuyerPos(result);
-  };
-
-  const savings = getSavings();
-
-  const saveRfq = async (vendorId: string, companyName: string, selectedProduct: string, selectedPrice: number, rating?: number, notes?: string) => {
+  const handleNegotiate = async (vendorId: string, companyName: string, selectedProduct: string, selectedPrice: number) => {
     setSavingRfq(vendorId);
-    setFeedbackModal(null);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     
-    // Recalculate savings specifically for the chosen row vs the average
     let savedAmount = 0;
     if (results.length > 1 && quantity) {
       const avgPrice = results.reduce((acc, r) => acc + r.price, 0) / results.length;
@@ -236,477 +226,183 @@ export default function BuyerSearch() {
       }
     }
 
-    await supabase.from("rfq_history").insert({
+    const { data: newRfq } = await supabase.from("rfq_history").insert({
       buyer_id: user.id,
       vendor_id: vendorId,
-      product_name: searchMode === "smart" ? smartQuery : selectedProduct,
+      product_name: searchMode ==="semantic" ? smartQuery : selectedProduct,
       quantity: Number(quantity) || 1,
       price_per_unit: selectedPrice,
       saved_amount: savedAmount,
       priority,
-      experience_rating: rating || null,
-      feedback_notes: notes || null
-    });
+      experience_rating: null,
+      feedback_notes: null
+    }).select().single();
+
     setAwardedRfq(vendorId);
+    setSavingRfq(null);
+
     setTimeout(() => {
-      router.push("/dashboard/history");
-    }, 1500);
+      if (newRfq?.id) {
+        router.push(`/dashboard/deals/${newRfq.id}`);
+      } else {
+        router.push("/dashboard/deals");
+      }
+    }, 1000);
   };
 
-  if (catalogMeta.length === 0) {
-    return (
-      <div className="max-w-6xl w-full flex flex-col items-center justify-center gap-4 py-20 text-center animate-[fadeUp_0.4s_ease-out_both]">
-        <div className="w-16 h-16 rounded-2xl bg-stone-100 flex items-center justify-center text-3xl mb-2">📦</div>
-        <h1 className={`${fraunces.className} text-2xl text-stone-900`}>Catalogue is empty</h1>
-        <p className="text-stone-500 max-w-md">No vendors have listed products yet. Check back soon or invite vendors to upload their brochures.</p>
-      </div>
-    );
-  }
+  const handleAward = (vendorId: string, companyName: string, selectedProduct: string, selectedPrice: number) => {
+    setFeedbackModal({ vendorId, companyName, product: selectedProduct, price: selectedPrice });
+    setFeedbackRating(0);
+    setFeedbackNotes("");
+  };
+
+  const saveAwardRating = async () => {
+    if (!feedbackModal) return;
+    setSavingRfq(feedbackModal.vendorId);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    let savedAmount = 0;
+    if (results.length > 1 && quantity) {
+      const avgPrice = results.reduce((acc, r) => acc + r.price, 0) / results.length;
+      if (avgPrice > feedbackModal.price) {
+        savedAmount = (avgPrice - feedbackModal.price) * Number(quantity);
+      }
+    }
+
+    const { data: newRfq } = await supabase.from("rfq_history").insert({
+      buyer_id: user.id,
+      vendor_id: feedbackModal.vendorId,
+      product_name: searchMode ==="semantic" ? smartQuery : feedbackModal.product,
+      quantity: Number(quantity) || 1,
+      price_per_unit: feedbackModal.price,
+      saved_amount: savedAmount,
+      priority,
+      experience_rating: feedbackRating || null,
+      feedback_notes: feedbackNotes || null
+    }).select().single();
+
+    setAwardedRfq(feedbackModal.vendorId);
+    setFeedbackModal(null);
+    setSavingRfq(null);
+
+    setTimeout(() => {
+      if (newRfq?.id) {
+        router.push(`/dashboard/deals/${newRfq.id}`);
+      } else {
+        router.push("/dashboard/deals");
+      }
+    }, 1000);
+  };
 
   return (
-    <div className="max-w-6xl w-full flex flex-col gap-8 animate-[fadeUp_0.4s_ease-out_both]">
+    <div className="w-full space-y-8 animate-fade-in">
       
-      <div className="mb-2">
-        <h1 className={`${fraunces.className} text-2xl text-stone-900`}>Find the right vendor</h1>
-        <p className="mt-2 text-stone-500">Pick what you need, and we&apos;ll rank the vendors that sell it.</p>
-      </div>
-
-      {/* RFQ Builder Form */}
-      <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm animate-[fadeUp_0.3s_ease-out_both]">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-          <h2 className={`${fraunces.className} text-xl text-stone-900`}>Create Request for Quote (RFQ)</h2>
-          <div className="flex bg-stone-100 p-1 rounded-lg">
-            <button
-              onClick={() => setSearchMode("exact")}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${searchMode === "exact" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"}`}
-            >
-              Exact Product
-            </button>
-            <button
-              onClick={() => setSearchMode("smart")}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${searchMode === "smart" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"}`}
-            >
-              Smart Search ✨
-            </button>
-          </div>
-        </div>
+      {/* 3-Column Split Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative">
-          <div className="col-span-1 md:col-span-3">
-            {searchMode === "exact" ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-2">Category</label>
-                  <select
-                    value={selectedCategory || ""}
-                    onChange={(e) => {
-                      setSelectedCategory(e.target.value);
-                      setProduct("");
-                    }}
-                    className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c]"
-                  >
-                    <option value="" disabled>Select a category...</option>
-                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-stone-700 mb-2">What do you need?</label>
-                  <select
-                    value={product}
-                    onChange={(e) => setProduct(e.target.value)}
-                    disabled={!selectedCategory}
-                    className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c] disabled:opacity-50"
-                  >
-                    <option value="" disabled>{selectedCategory ? "Select a product..." : "Pick a category first..."}</option>
-                    {availableProducts.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-              </div>
-            ) : (
-              <>
-                <label className="block text-sm font-medium text-stone-700 mb-2">Describe what you need (AI Search)</label>
-                <input
-                  type="text"
-                  value={smartQuery}
-                  onChange={(e) => setSmartQuery(e.target.value)}
-                  placeholder="e.g., high performance laptop for 4k video editing"
-                  className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c]"
-                />
-              </>
-            )}
-          </div>
+        {/* Left Column (320px width on desktop) - stacked forms */}
+        <div className="lg:col-span-4 xl:col-span-3 space-y-6 w-full lg:max-w-[320px]">
+          
+          {/* 1. Sourcing Form Card */}
+          <VendorSearchForm
+            searchMode={searchMode}
+            setSearchMode={setSearchMode}
+            category={selectedCategory}
+            setCategory={setSelectedCategory}
+            categories={categories}
+            item={product}
+            setItem={setProduct}
+            items={availableProducts}
+            quantity={quantity}
+            setQuantity={setQuantity}
+            deadline={deadline}
+            setDeadline={setDeadline}
+            semanticQuery={smartQuery}
+            setSemanticQuery={setSmartQuery}
+            onSearch={() => search()}
+            loading={loading}
+          />
 
-            <div className="relative">
-              <label className="block text-sm font-medium text-stone-700 mb-2">Quantity Needed</label>
-              
-              {/* Max Quantity Popup */}
-              {overStockLimit && (
-                <div className="absolute -top-14 left-0 z-10 w-full rounded-lg bg-red-100 px-3 py-2 text-xs font-medium text-red-800 shadow-sm border border-red-200 animate-[fadeUp_0.2s_ease-out_both]">
-                  Max available quantity is {maxStock}
-                  <div className="absolute -bottom-1.5 left-4 w-3 h-3 bg-red-100 border-r border-b border-red-200 rotate-45"></div>
-                </div>
-              )}
-              
-              <input
-                type="number"
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value ? Number(e.target.value) : "")}
-                placeholder="e.g. 50"
-                className={`w-full rounded-xl border p-3 bg-white outline-none focus:ring-1 transition-colors ${
-                  overStockLimit ? 'border-red-400 focus:border-red-500 focus:ring-red-500 bg-red-50' : 'border-stone-300 focus:border-[#c2410c] focus:ring-[#c2410c]'
-                }`}
-              />
-            </div>
+          {/* 2. active constraints config */}
+          <ActiveConstraints
+            priority={priority}
+            setPriority={setPriority}
+            priceWeight={priceWeight}
+            setPriceWeight={setPriceWeight}
+            proximityWeight={proximityWeight}
+            setProximityWeight={setProximityWeight}
+            deliveryWeight={deliveryWeight}
+            setDeliveryWeight={setDeliveryWeight}
+          />
 
-            <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">Max Delivery Deadline (days)</label>
-              <input
-                type="number"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value ? Number(e.target.value) : "")}
-                placeholder="Optional"
-                className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c]"
-              />
-            </div>
-
-            <div className="col-span-1 md:col-span-3 mt-2">
-              <label className="block text-sm font-medium text-stone-700 mb-2">What matters most?</label>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {OPTIONS.map((o) => (
-                  <button
-                    key={o.key}
-                    onClick={() => setPriority(o.key)}
-                    className={`rounded-xl border p-3 text-left transition-all active:scale-[0.98] ${
-                      priority === o.key ? "border-[#c2410c] bg-[#fff7f2] shadow-[0_0_0_1px_#c2410c]" : "border-stone-300 bg-white hover:border-stone-400"
-                    }`}
-                  >
-                    <p className="text-sm font-semibold text-stone-900">{o.label}</p>
-                    <p className="mt-0.5 text-xs text-stone-500">{o.desc}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="col-span-1 md:col-span-3 mt-4">
-              <label className="block text-sm font-medium text-stone-700 mb-2">Your location (optional — to see distance)</label>
-              
-              <div className="flex gap-2 mb-3">
-                <input 
-                  value={locationAddress}
-                  onChange={e => setLocationAddress(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") handleAddressSearch(); }}
-                  placeholder="e.g. Connaught Place, Delhi" 
-                  className="flex-1 rounded-xl border border-stone-300 px-4 py-3 bg-white outline-none focus:border-[#c2410c] focus:ring-2 focus:ring-[#c2410c]/10 transition-all"
-                />
-                <button 
-                  onClick={handleAddressSearch}
-                  disabled={locationSearching || !locationAddress.trim()}
-                  className="px-6 py-3 bg-[#e8a28e] text-white font-medium rounded-xl hover:bg-[#d68c76] transition-colors disabled:opacity-50"
-                >
-                  {locationSearching ? "..." : "Find"}
-                </button>
-              </div>
-              
-              <div className="w-full overflow-hidden rounded-xl border border-stone-200 bg-stone-100 shadow-sm">
-                <LocationMap 
-                  value={buyerPos} 
-                  vendorPos={results.length > 0 && hasSearched ? results[0].vendorPos : null}
-                  onPick={(p) => setBuyerPos(p)} 
-                  height={220} 
-                />
-              </div>
-              
-              {buyerPos && (
-                <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1">
-                  <span>📍</span> Location set. Distance will be calculated.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <button
-            onClick={search}
-            disabled={(searchMode === "exact" && (!product || overStockLimit)) || (searchMode === "smart" && !smartQuery) || loading}
-            className="mt-8 w-full md:w-auto px-8 py-3.5 rounded-xl bg-[#0c0a09] text-stone-50 font-medium transition-all hover:bg-stone-800 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2"
-          >
-            {loading ? (<><svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>Finding vendors...</>) : "Compare Vendors"}
-          </button>
+          {/* 3. delivery destination geocode map */}
+          <DeliveryDestination
+            buyerPos={buyerPos}
+            setBuyerPos={setBuyerPos}
+            locationAddress={locationAddress}
+            setLocationAddress={setLocationAddress}
+            maxDistance={maxDistance}
+            setMaxDistance={setMaxDistance}
+          />
         </div>
 
-      {/* Top Product Card */}
-      {hasSearched && !loading && results.length > 0 && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 shadow-sm relative overflow-hidden animate-[fadeUp_0.35s_ease-out_both]">
-          <div className="absolute top-0 right-0 p-4 opacity-10 text-6xl">🏆</div>
-          <h3 className="text-sm font-medium text-emerald-800 mb-2">Top Recommended Product</h3>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <p className={`${fraunces.className} text-2xl text-emerald-950`}>
-                {results[0].product_name}
-              </p>
-              <p className="text-emerald-700 mt-1 font-medium">
-                Offered by {results[0].company_name || "Vendor"}
-              </p>
-            </div>
-            <div className="flex gap-4">
-              <div className="bg-white/60 px-4 py-2 rounded-lg border border-emerald-100">
-                <p className="text-xs text-emerald-600 font-medium">Price</p>
-                <p className="text-lg font-semibold text-emerald-900">₹{results[0].price.toLocaleString()}</p>
-              </div>
-              <div className="bg-white/60 px-4 py-2 rounded-lg border border-emerald-100">
-                <p className="text-xs text-emerald-600 font-medium">Match</p>
-                <p className="text-lg font-semibold text-emerald-900">{Math.round(results[0].score)}%</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Skeleton Loader */}
-      {loading && hasSearched && (
-        <div className="animate-[fadeUp_0.3s_ease-out_both]">
-          <div className="rounded-2xl border border-stone-200 bg-white overflow-hidden shadow-sm">
-            <div className="p-6 border-b border-stone-200 bg-stone-50 flex items-center gap-3">
-              <span className="text-[#c2410c] text-lg animate-pulse">✨</span>
-              <span className="text-sm font-medium text-stone-600 animate-pulse">Agent is comparing vendors...</span>
-            </div>
-            <div className="p-0">
-              <div className="grid grid-cols-9 gap-0 px-6 py-4 border-b border-stone-100">
-                {Array.from({ length: 9 }).map((_, i) => (
-                  <div key={i} className="h-3 bg-stone-100 rounded animate-pulse" style={{ animationDelay: `${i * 80}ms` }}></div>
-                ))}
-              </div>
-              {Array.from({ length: 3 }).map((_, row) => (
-                <div key={row} className="grid grid-cols-9 gap-4 px-6 py-5 border-b border-stone-50" style={{ animationDelay: `${row * 120}ms` }}>
-                  <div className="col-span-2 flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-stone-200 animate-pulse"></div>
-                    <div className="h-4 w-24 bg-stone-200 rounded animate-pulse"></div>
-                  </div>
-                  <div className="h-4 w-12 bg-stone-100 rounded animate-pulse"></div>
-                  <div className="h-4 w-16 bg-stone-100 rounded animate-pulse"></div>
-                  <div className="h-4 w-14 bg-stone-100 rounded animate-pulse"></div>
-                  <div className="h-4 w-14 bg-stone-100 rounded animate-pulse"></div>
-                  <div className="h-4 w-10 bg-stone-100 rounded animate-pulse"></div>
-                  <div className="h-4 w-10 bg-stone-100 rounded animate-pulse"></div>
-                  <div className="h-4 w-10 bg-stone-100 rounded animate-pulse"></div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Results Section */}
-      {hasSearched && !loading && (
-        <div className="flex flex-col xl:flex-row gap-6 animate-[fadeUp_0.4s_ease-out_both]">
-          <div className="flex-1 rounded-2xl border border-stone-200 bg-white overflow-hidden shadow-sm flex flex-col">
-            <div className="p-6 border-b border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-stone-50">
-              <h2 className={`${fraunces.className} text-xl text-stone-900`}>
-                Vendor Comparison for &ldquo;{searchMode === "smart" ? smartQuery : product}&rdquo;
-              </h2>
-              {savings !== null && savings > 0 && (
-                <span className="inline-flex items-center px-4 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-sm font-medium border border-emerald-200/50 shadow-sm">
-                  Potential Savings: ₹{savings.toLocaleString()}
+        {/* Center/Right Column (flex-grow) - Results Area */}
+        <div className="lg:col-span-8 xl:col-span-9 space-y-6 flex-1 min-w-0">
+          
+          {/* Header statistics info block */}
+          {hasSearched && !loading && results.length > 0 && (
+            <div className="bg-[#0F1E3C] border border-[#0F1E3C] rounded-[10px] p-5 text-white flex justify-between items-center animate-fade-in">
+              <div className="text-left">
+                <span className="text-[10px] font-bold uppercase tracking-wider bg-[#E8A838] text-[#0F1E3C] px-2 py-0.5 rounded-full">
+                  AI Recommendation
                 </span>
-              )}
-            </div>
-
-            {searchError ? (
-              <div className="p-8 text-center text-red-600">
-                {searchError}
+                <h3 className="text-lg tracking-tight mt-2.5">
+                  Best vendor fit found for your query parameters.
+                </h3>
               </div>
-            ) : results.length === 0 ? (
-              <div className="p-8 text-center text-stone-500">
-                No vendors found matching your criteria. Try adjusting the quantity or deadline.
+              <div className="bg-white/10 px-4 py-2 rounded-[8px] text-right  text-xs">
+                <span>Top Score: </span>
+                <span className="font-bold text-[#E8A838]">{Math.round(results[0].score * 100)}% Match</span>
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-stone-50/50 text-stone-500 border-b border-stone-200">
-                    <tr>
-                      <th className="px-6 py-4 font-medium min-w-[200px]">Vendor</th>
-                      <th className="px-6 py-4 font-medium w-32">Match Score</th>
-                      <th className="px-6 py-4 font-medium w-32">Price (₹)</th>
-                      <th className="px-6 py-4 font-medium w-32">Delivery</th>
-                      <th className="px-6 py-4 font-medium w-32">Warranty</th>
-                      <th className="px-6 py-4 font-medium w-32">MOQ</th>
-                      <th className="px-6 py-4 font-medium w-32">Stock</th>
-                      <th className="px-6 py-4 font-medium w-32">Rating</th>
-                      <th className="px-6 py-4 font-medium w-32">Distance</th>
-                      <th className="px-6 py-4 font-medium w-32 text-right sticky right-0 bg-stone-50/95 backdrop-blur-sm shadow-[-8px_0_15px_-3px_rgba(0,0,0,0.05)] border-l border-stone-100 z-10">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {results.map((r, i) => (
-                      <tr key={r.id} className={`transition-colors hover:bg-stone-50/50 ${i === 0 ? 'bg-[#fff7f2]/50' : 'bg-white'}`}>
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-2.5">
-                            {i === 0 && <span className="w-2.5 h-2.5 rounded-full bg-[#c2410c] shadow-[0_0_0_4px_#fff7f2]" title="Top Match" />}
-                            <span className={`font-semibold ${i === 0 ? 'text-[#c2410c]' : 'text-stone-900'}`}>
-                              {r.company_name}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-5 font-bold text-stone-900">
-                          <button
-                            onClick={() => setAuditVendorId(auditVendorId === r.vendor_id ? null : r.vendor_id)}
-                            className="flex items-center gap-2 group cursor-pointer hover:text-[#c2410c] transition-colors"
-                            title="Click to view scoring breakdown"
-                          >
-                            <div className="h-1.5 w-12 bg-stone-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-[#c2410c]" style={{ width: `${r.score * 100}%` }} />
-                            </div>
-                            {(r.score * 100).toFixed(0)}
-                            <svg className="w-3.5 h-3.5 text-stone-400 group-hover:text-[#c2410c] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          </button>
-                        </td>
-                        <td className="px-6 py-5 text-stone-800">₹{r.price.toLocaleString()}</td>
-                        <td className="px-6 py-5 text-stone-600">{r.delivery_days ? `${r.delivery_days} days` : '—'}</td>
-                        <td className="px-6 py-5 text-stone-600">{r.warranty_months ? `${r.warranty_months} mo` : '—'}</td>
-                        <td className="px-6 py-5 text-stone-600">{r.moq ?? '—'}</td>
-                        <td className="px-6 py-5 text-stone-600">{r.stock ?? '—'}</td>
-                        <td className="px-6 py-5 text-stone-600">
-                          {r.rating ? (
-                            <div className="flex items-center gap-1">
-                              <span className="text-amber-500">★</span> {r.rating}
-                            </div>
-                          ) : '—'}
-                        </td>
-                        <td className="px-6 py-5 text-stone-600">{r.distanceKm != null ? `≈ ${Math.round(r.distanceKm)} km` : '—'}</td>
-                        <td className="px-6 py-5 text-right sticky right-0 shadow-[-8px_0_15px_-3px_rgba(0,0,0,0.05)] border-l border-stone-100/50 ${i === 0 ? 'bg-[#fff7f2]' : 'bg-white'}">
-                          <button
-                            onClick={() => {
-                              setFeedbackModal({ vendorId: r.vendor_id, companyName: r.company_name || "Vendor", product: r.product_name, price: r.price });
-                              setFeedbackRating(0);
-                              setFeedbackNotes("");
-                            }}
-                            disabled={savingRfq === r.vendor_id || awardedRfq === r.vendor_id}
-                            className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 ${
-                              awardedRfq === r.vendor_id 
-                                ? "bg-emerald-600 text-white" 
-                                : "bg-stone-900 text-white hover:bg-[#c2410c]"
-                            }`}
-                          >
-                            {awardedRfq === r.vendor_id ? "Awarded ✓" : savingRfq === r.vendor_id ? "Saving..." : "Award"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* AI Negotiation Brief */}
-          {results.length > 0 && (
-            <div className="w-full xl:w-80 shrink-0 rounded-2xl border border-stone-200 bg-white p-6 shadow-sm h-fit">
-              <h3 className="flex items-center gap-2 font-semibold text-stone-900 mb-5 pb-4 border-b border-stone-100">
-                <span className="text-[#c2410c] text-lg">✨</span> Negotiation Strategy
-              </h3>
-              
-              {briefLoading ? (
-                <div className="space-y-4 animate-pulse mt-2">
-                  <div className="h-2 bg-stone-100 rounded w-full"></div>
-                  <div className="h-2 bg-stone-100 rounded w-5/6"></div>
-                  <div className="h-2 bg-stone-100 rounded w-4/6"></div>
-                  <div className="pt-2">
-                    <div className="h-2 bg-stone-100 rounded w-full"></div>
-                    <div className="h-2 bg-stone-100 rounded w-5/6 mt-4"></div>
-                  </div>
-                </div>
-              ) : negotiationBrief.length > 0 ? (
-                <ul className="space-y-4">
-                  {negotiationBrief.map((point, i) => (
-                    <li key={i} className="text-sm text-stone-600 flex items-start gap-3 leading-relaxed">
-                      <span className="text-[#c2410c] mt-0.5 shrink-0">•</span>
-                      <span>{point}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-stone-500 text-center py-4">Strategy not available.</p>
-              )}
             </div>
           )}
-        </div>
-      )}
-      {/* Audit Breakdown Modal */}
-      {auditVendorId && (() => {
-        const vendor = results.find(r => r.vendor_id === auditVendorId);
-        if (!vendor || !vendor.breakdown) return null;
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setAuditVendorId(null)}>
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out_both]" />
-            <div
-              className="relative bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden animate-[fadeUp_0.25s_ease-out_both]"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="p-6 border-b border-stone-200 bg-stone-50 flex items-center justify-between">
-                <div>
-                  <h3 className={`${fraunces.className} text-lg text-stone-900`}>Scoring Breakdown</h3>
-                  <p className="text-sm text-stone-500 mt-1">
-                    {vendor.company_name} {vendor.contact_email && <span className="text-stone-400 ml-1">({vendor.contact_email})</span>}
-                  </p>
-                </div>
-                <button onClick={() => setAuditVendorId(null)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-stone-200 transition-colors text-stone-500">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-              </div>
-              <div className="p-6 space-y-4">
-                {vendor.breakdown.map((b) => {
-                  const pct = Math.round(b.normalisedScore * 100);
-                  const weightPct = Math.round(b.weight * 100);
-                  return (
-                    <div key={b.factor}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-stone-900">{b.label}</span>
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">{weightPct}% weight</span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-sm font-bold text-stone-900">{pct}</span>
-                          <span className="text-xs text-stone-400">/100</span>
-                          {b.rawValue !== null && (
-                            <span className="text-xs text-stone-400 ml-2">
-                              (raw: {b.factor === 'price' ? `₹${b.rawValue.toLocaleString()}` : b.factor === 'delivery_days' ? `${b.rawValue}d` : b.factor === 'warranty_months' ? `${b.rawValue}mo` : b.rawValue})
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{
-                            width: `${pct}%`,
-                            background: pct >= 70 ? '#059669' : pct >= 40 ? '#d97706' : '#dc2626',
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-                <div className="pt-4 mt-4 border-t border-stone-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-stone-700">Final Weighted Score</span>
-                  <span className={`${fraunces.className} text-2xl text-stone-900`}>{Math.round(vendor.score * 100)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
+          {/* Sourcing Search Error banner */}
+          {searchError && (
+            <div className="p-4 rounded-[10px] border border-red-200 bg-red-50 text-xs font-semibold text-red-700 text-left animate-fade-in">
+              ⚠️ {searchError}
+            </div>
+          )}
+
+          {/* Dynamic Grid Results */}
+          <VendorResultsGrid
+            vendors={results}
+            loading={loading}
+            hasSearched={hasSearched}
+            onNegotiate={handleNegotiate}
+            onAward={handleAward}
+            onTryQuery={handleTryPreset}
+          />
+        </div>
+
+      </div>
+
+      {/* Award Rating popup details */}
       {feedbackModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-xl animate-[fadeUp_0.3s_ease-out_both] flex flex-col relative">
-            <h3 className={`${fraunces.className} text-2xl text-stone-900 mb-2`}>Rate Vendor</h3>
-            <p className="text-stone-500 text-sm mb-6">You are awarding this RFQ to <strong>{feedbackModal.companyName}</strong>. Please rate your expected experience to help us improve future matches.</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/40 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-[10px] p-6 sm:p-8 max-w-md w-full shadow-2xl animate-fade-up flex flex-col relative text-left" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-[#0F1E3C] tracking-tight mb-2">Finalize Proposal Award</h3>
+            <p className="text-neutral-500 text-xs leading-relaxed mb-6">
+              You are awarding this bid to <strong className="text-[#0F1E3C]">{feedbackModal.companyName}</strong>. Rate the expected transaction experience to help our matching index.
+            </p>
             
             <div className="flex items-center gap-2 mb-6 justify-center">
               {[1, 2, 3, 4, 5].map(star => (
                 <button 
                   key={star} 
                   onClick={() => setFeedbackRating(star)}
-                  className={`text-4xl transition-transform hover:scale-110 ${feedbackRating >= star ? 'text-amber-400' : 'text-stone-200'}`}
+                  className={`text-4xl transition-transform hover:scale-110 cursor-pointer ${feedbackRating >= star ?'text-[#E8A838]' :'text-neutral-200'}`}
                 >
                   ★
                 </button>
@@ -716,38 +412,32 @@ export default function BuyerSearch() {
             <textarea
               value={feedbackNotes}
               onChange={e => setFeedbackNotes(e.target.value)}
-              placeholder="Any specific reasons for choosing this vendor? (Optional)"
-              className="w-full rounded-xl border border-stone-300 p-3 bg-white outline-none focus:border-[#c2410c] focus:ring-1 focus:ring-[#c2410c] min-h-[100px] resize-y mb-6 text-sm"
+              placeholder="Any specific negotiation concessions? (Optional)"
+              className="w-full rounded-[8px] border border-neutral-300 p-3.5 bg-white text-xs outline-none focus:border-[#0F1E3C] focus:ring-1 focus:ring-[#0F1E3C] min-h-[100px] resize-y mb-6 text-[#111827]"
             />
 
-            <div className="flex gap-3 mt-auto">
+            <div className="flex gap-3">
               <button
-                onClick={() => saveRfq(feedbackModal.vendorId, feedbackModal.companyName, feedbackModal.product, feedbackModal.price)}
-                className="flex-1 px-4 py-3 text-sm font-medium text-stone-600 bg-stone-100 rounded-xl hover:bg-stone-200 transition-colors"
+                onClick={saveAwardRating}
+                className="flex-1 px-4 py-3 text-xs font-bold text-neutral-600 bg-neutral-100 rounded-[8px] hover:bg-neutral-200 transition-colors cursor-pointer"
               >
-                Skip & Save
+                Skip & Create Deal
               </button>
               <button
-                onClick={() => saveRfq(feedbackModal.vendorId, feedbackModal.companyName, feedbackModal.product, feedbackModal.price, feedbackRating, feedbackNotes)}
+                onClick={saveAwardRating}
                 disabled={feedbackRating === 0}
-                className="flex-1 px-4 py-3 text-sm font-medium text-white bg-[#c2410c] rounded-xl hover:bg-[#9a3412] transition-colors disabled:opacity-50"
+                className="flex-1 px-4 py-3 text-xs font-bold text-white bg-[#0F1E3C] rounded-[8px] hover:bg-[#1A315C] transition-colors disabled:opacity-50 cursor-pointer"
               >
-                Submit & Save
+                Submit & Create Deal
               </button>
             </div>
-            <button onClick={() => setFeedbackModal(null)} className="absolute top-4 right-4 text-stone-400 hover:text-stone-900">
+            <button onClick={() => setFeedbackModal(null)} className="absolute top-4 right-4 text-neutral-400 hover:text-[#0F1E3C] cursor-pointer">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
         </div>
       )}
 
-      <style>{`
-        @keyframes fadeUp { from {opacity:0;transform:translateY(12px)} to {opacity:1;transform:translateY(0)} }
-        @keyframes fadeIn { from {opacity:0} to {opacity:1} }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
     </div>
   );
 }
