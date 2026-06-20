@@ -91,7 +91,7 @@ export default function VendorSearchForm({
                 :"text-[#6B7280] hover:text-[#0f1e3c]"
             }`}
           >
-            Semantic search ✦
+            Smart search ✦
           </button>
         </div>
 

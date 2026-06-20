@@ -159,7 +159,7 @@ export default function VendorResultsGrid({
               <div className="space-y-1">
                 <h5 className="text-xs font-bold text-gray-900">Define Sourcing Mode</h5>
                 <p className="text-[11px] text-gray-500 font-semibold leading-normal">
-                  Select a catalog product or describe your procurement need using semantic search.
+                  Select a catalog product or describe your procurement need using smart search.
                 </p>
               </div>
             </div>
