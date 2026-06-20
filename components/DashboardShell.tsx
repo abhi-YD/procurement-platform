@@ -37,7 +37,7 @@ export default function DashboardShell({
   }, []);
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-[#F8F7F4]">
       {/* Sidebar Overlay */}
       {sidebarOpen && (
         <div
@@ -66,7 +66,7 @@ export default function DashboardShell({
               <Menu className="w-5 h-5" />
             </button>
             <h1 className="text-sm font-semibold text-gray-900 tracking-wide uppercase hidden sm:block">
-              {companyName ||"Workspace"}
+              {companyName || "Workspace"}
             </h1>
           </div>
 
@@ -101,7 +101,7 @@ export default function DashboardShell({
                     <Link
                       href="/dashboard/profile"
                       onClick={() => setDropdownOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[#6B7280] hover:bg-neutral-50 hover:text-[#0F1E3C] transition-colors cursor-pointer"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-[#6B7280] hover:bg-neutral-50 hover:text-[#0F1E3C] transition-colors cursor-pointer"
                     >
                       <User className="w-4 h-4" />
                       <span>View Profile</span>

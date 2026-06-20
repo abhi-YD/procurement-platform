@@ -1,7 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Trophy, FileText, FileSpreadsheet, Image as ImageIcon, ArrowRight } from "lucide-react";
+import BrochureHistoryList from "@/components/BrochureHistoryList";
+import { Trophy, FileText } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ export default async function VendorHistoryPage() {
     redirect("/");
   }
 
-  // Fetch RFQ history awarded to this vendor (only closed/finalized deals)
+  // Fetch RFQ history awarded to this vendor
   const { data: awards, error: awardsErr } = await supabase
     .from("rfq_history")
     .select(`
@@ -25,7 +26,6 @@ export default async function VendorHistoryPage() {
       buyer_id
     `)
     .eq("vendor_id", user.id)
-    .eq("status", "closed")
     .order("created_at", { ascending: false });
 
   // Get buyer company names
@@ -39,7 +39,7 @@ export default async function VendorHistoryPage() {
   // Fetch Brochure Upload History from DB brochure_uploads table
   const { data: uploads, error: uploadsErr } = await supabase
     .from("brochure_uploads")
-    .select("id, file_name, file_size, created_at")
+    .select("*")
     .eq("vendor_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -93,55 +93,7 @@ export default async function VendorHistoryPage() {
             <h2 className="text-xl font-bold text-stone-900 flex items-center gap-2">
               <FileText className="w-5 h-5 text-[#E8A838]" /> Brochure Uploads
             </h2>
-            <div className="bg-white rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
-              {uploadsErr ? (
-                <div className="p-8 text-center text-red-500 text-sm">{uploadsErr.message}</div>
-              ) : !uploads || uploads.length === 0 ? (
-                <div className="p-8 text-center text-stone-500 text-sm">
-                  You haven't uploaded any brochures yet.
-                </div>
-              ) : (
-                <ul className="divide-y divide-stone-100">
-                  {uploads.map((upload) => {
-                    const isCsv = upload.file_name.toLowerCase().endsWith(".csv");
-                    const isPdf = upload.file_name.toLowerCase().endsWith(".pdf");
-                    return (
-                      <li key={upload.id} className="hover:bg-stone-50/50 transition-colors">
-                        <Link 
-                          href={`/dashboard/vendor-history/brochure/${upload.id}`}
-                          className="p-5 flex items-center justify-between cursor-pointer"
-                        >
-                          <div className="flex items-center gap-3 overflow-hidden">
-                            <div className="w-10 h-10 shrink-0 bg-stone-100 rounded-lg flex items-center justify-center text-[#0F1E3C] shadow-inner">
-                              {isCsv ? (
-                                <FileSpreadsheet className="w-5 h-5" />
-                              ) : isPdf ? (
-                                <FileText className="w-5 h-5" />
-                              ) : (
-                                <ImageIcon className="w-5 h-5" />
-                              )}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="font-semibold text-stone-900 text-sm truncate">
-                                {upload.file_name.replace(/^\d+-/, "")}
-                              </p>
-                              <div className="flex items-center gap-2 mt-0.5 text-xs text-stone-500 font-normal">
-                                <span>{upload.file_size || "Unknown Size"}</span>
-                                <span>&middot;</span>
-                                <span>{new Date(upload.created_at).toLocaleDateString()}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <span className="text-xs font-semibold text-[#0F1E3C] bg-[#0F1E3C]/5 px-3 py-1.5 rounded-full hover:bg-[#0F1E3C]/10 transition-colors flex items-center gap-1">
-                            View data <ArrowRight className="w-3.5 h-3.5" />
-                          </span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+            <BrochureHistoryList initialUploads={uploads || []} error={uploadsErr?.message} />
           </div>
 
         </div>

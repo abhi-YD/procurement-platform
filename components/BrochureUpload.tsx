@@ -174,12 +174,25 @@ export default function BrochureUpload({
       embedding: embeddings[i] || null,
     }));
     
+    // 1. Delete old active catalog to prevent duplicates
+    const { error: deleteErr } = await supabase
+      .from("vendor_catalog")
+      .delete()
+      .eq("vendor_id", user.id);
+
+    if (deleteErr) {
+      setSaving(false);
+      setMessage("Failed to clear old catalog: " + deleteErr.message);
+      return;
+    }
+
+    // 2. Insert new active catalog
     const { error } = await supabase.from("vendor_catalog").insert(rows);
     if (!error) {
       // Save details to brochure_uploads table for history page modal viewing
       await supabase.from("brochure_uploads").insert({
         vendor_id: user.id,
-        file_name: file?.name || fileDetails?.name || "Uploaded Brochure",
+        file_name: file?.name || fileDetails?.name || activeUploadedPath?.split('/').pop() || "Uploaded Brochure",
         file_path: activeUploadedPath || uploadedPath || "",
         file_size: file ? `${(file.size / 1024).toFixed(0)} KB` : (fileDetails?.size || "Unknown Size"),
         parsed_data: products

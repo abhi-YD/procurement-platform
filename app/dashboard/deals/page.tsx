@@ -1,8 +1,8 @@
-import { createClient } from"@/lib/supabase/server";
-import { redirect } from"next/navigation";
-import Link from"next/link";
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import Link from "next/link";
 
-export const dynamic ='force-dynamic';
+export const dynamic = 'force-dynamic';
 
 export default async function DealsListPage() {
   const supabase = await createClient();
@@ -19,7 +19,7 @@ export default async function DealsListPage() {
 
   if (!profile) redirect("/select-role");
 
-  const isBuyer = profile.role ==="buyer";
+  const isBuyer = profile.role === "buyer";
 
   // Fetch RFQ history for the deals
   const query = supabase
@@ -46,7 +46,7 @@ export default async function DealsListPage() {
       .in("id", oppositeIds);
 
     if (profiles) {
-      companyMap = profiles.reduce((acc, p) => ({ ...acc, [p.id]: p.company_name ||"Unknown Company" }), {});
+      companyMap = profiles.reduce((acc, p) => ({ ...acc, [p.id]: p.company_name || "Unknown Company" }), {});
     }
   }
 
@@ -99,7 +99,7 @@ export default async function DealsListPage() {
             <tr>
               <th className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[#0F1E3C]">Initiated Date</th>
               <th className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[#0F1E3C]">Procured Item</th>
-              <th className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[#0F1E3C]">{isBuyer ?"Supplier Partner" :"Client"}</th>
+              <th className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[#0F1E3C]">{isBuyer ? "Supplier Partner" : "Client"}</th>
               <th className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[#0F1E3C]">Quantity</th>
               <th className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[#0F1E3C]">Total Bid</th>
               <th className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[#0F1E3C]">Stage</th>
@@ -109,9 +109,9 @@ export default async function DealsListPage() {
           <tbody className="divide-y divide-neutral-100">
             {list.map((deal) => {
               const dateFormatted = new Date(deal.created_at).toLocaleDateString("en-IN", {
-                month:"short",
-                day:"numeric",
-                year:"numeric"
+                month: "short",
+                day: "numeric",
+                year: "numeric"
               });
               const totalVal = deal.price_per_unit * deal.quantity;
 
@@ -125,7 +125,7 @@ export default async function DealsListPage() {
                       <span className="font-bold text-[#0F1E3C] text-sm">{deal.product_name}</span>
                       {deal.priority && (
                         <span className="text-[10px] text-[#6B7280] mt-0.5 font-medium uppercase tracking-wider">
-                          Priority: {deal.priority.replace("_","")}
+                          Priority: {deal.priority.replace("_", "")}
                         </span>
                       )}
                     </div>
@@ -133,10 +133,10 @@ export default async function DealsListPage() {
                   <td className="px-6 py-5 font-semibold text-[#0F1E3C]">
                     {deal.partyName}
                   </td>
-                  <td className="px-6 py-5 text-neutral-600  text-xs">
+                  <td className="px-6 py-5 text-neutral-600 text-xs">
                     {deal.quantity.toLocaleString()} units
                   </td>
-                  <td className="px-6 py-5 font-bold text-[#0F1E3C]  text-xs">
+                  <td className="px-6 py-5 font-bold text-[#0F1E3C] text-xs">
                     ₹{totalVal.toLocaleString()}
                   </td>
                   <td className="px-6 py-5">
@@ -183,8 +183,8 @@ export default async function DealsListPage() {
           <h3 className="text-sm font-bold text-[#0F1E3C]">No negotiations active</h3>
           <p className="text-xs text-[#6B7280] max-w-sm mx-auto">
             {isBuyer 
-              ?"Award an RFQ from the Compare Vendors tab to open a direct negotiation room with a supplier." 
-              :"Awaiting incoming bids. Keep your service areas and catalogues up to date to matching request parameters."}
+              ? "Click 'Negotiate' on a vendor card from the Compare Vendors tab to open a direct negotiation room with a supplier." 
+              : "Awaiting incoming bids. Keep your service areas and catalogues up to date to matching request parameters."}
           </p>
           {isBuyer && (
             <Link
